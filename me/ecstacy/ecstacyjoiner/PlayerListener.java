@@ -6,12 +6,15 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -20,9 +23,20 @@ public class PlayerListener implements Listener, CommandExecutor {
     private Map<String, String> playerJoiners = new HashMap<>();
     private Permission perms = null;
     private Chat chat = null;
+    private File playerDataFile;
+    private FileConfiguration playerData;
 
     public PlayerListener(Main plugin) {
         this.plugin = plugin;
+        this.playerDataFile = new File(plugin.getDataFolder(), "playerData.yml");
+        if (!this.playerDataFile.exists()) {
+            try {
+                this.playerDataFile.createNewFile();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        this.playerData = YamlConfiguration.loadConfiguration(this.playerDataFile);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         plugin.getCommand("ejoiner").setExecutor(this);
         plugin.getCommand("ecstacyjoiner").setExecutor(this);
@@ -72,6 +86,8 @@ public class PlayerListener implements Listener, CommandExecutor {
                     return true;
                 }
                 playerJoiners.put(player.getName(), joinerId);
+                playerData.set(player.getUniqueId().toString(), joinerId);
+                savePlayerData();
                 String joinerSuccessfullySetMessage = config.getString("joiner_successfully_set");
                 if (joinerSuccessfullySetMessage != null) {
                     player.sendMessage(Main.colorize(joinerSuccessfullySetMessage));
@@ -90,27 +106,29 @@ public class PlayerListener implements Listener, CommandExecutor {
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        String joinerId = playerJoiners.get(player.getName());
-
         FileConfiguration config = plugin.getConfig();
 
-        if (joinerId == null) {
+        String joinerId = playerData.getString(player.getUniqueId().toString(), null);
+        if (joinerId == null || !config.contains("joiners." + joinerId)) {
+            joinerId = null;
             for (String key : config.getConfigurationSection("joiners").getKeys(false)) {
                 String permission = config.getString("joiners." + key + ".permission");
                 if (permission == null || (perms != null && perms.has(player, permission))) {
                     joinerId = key;
-                    playerJoiners.put(player.getName(), joinerId);
-                    break;
                 }
             }
+            if (joinerId != null) {
+                playerJoiners.put(player.getName(), joinerId);
+                playerData.set(player.getUniqueId().toString(), joinerId);
+                savePlayerData();
+            } else {
+                playerJoiners.remove(player.getName());
+            }
+        } else {
+            playerJoiners.put(player.getName(), joinerId);
         }
 
-        String message = config.getString("joiners." + joinerId + ".message");
-        String permission = config.getString("joiners." + joinerId + ".permission");
-
-        if (permission != null && !permission.isEmpty() && (perms == null || !perms.has(player, permission))) {
-            return;
-        }
+        String message = joinerId != null ? config.getString("joiners." + joinerId + ".message") : null;
 
         if (message != null) {
             if (chat != null) {
@@ -121,6 +139,16 @@ public class PlayerListener implements Listener, CommandExecutor {
             }
             message = Main.colorize(message);
             event.setJoinMessage(message);
+        } else {
+            event.setJoinMessage(null);
+        }
+    }
+
+    private void savePlayerData() {
+        try {
+            playerData.save(playerDataFile);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 }
